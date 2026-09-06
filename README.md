@@ -136,6 +136,7 @@ Install the addon in Stremio with `https://your-domain.com/manifest.json`.
 | Source | Quality | How | Needs |
 |---|---|---|---|
 | CineSrc | True 1080p (~4.7 Mbps), 15 providers | Local Node sidecar (`sidecar/`) | Node.js 20+ |
+| VidLove | 1080p (~4.9 Mbps), 1 fast API | Pure Python JSON call, no sidecar | Nothing extra |
 
 CineSrc entries appear as `CineSrc 1080p` with details like
 `VidCloud • 1080p • 1920x1080 • 4.7 Mbps` (server • quality • resolution •
