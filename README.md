@@ -122,6 +122,9 @@ bitrate). `CINESRC_PROVIDERS` controls how many servers are probed/listed
 | `CINESRC_PROVIDERS` | `12` | How many servers to probe/list per title (`1` = fastest, first server only; `12` ~= all `us`) |
 | `CINESRC_REGIONS` | `us` | Only probe servers flagged with these regions (comma-separated, e.g. `us,fr`); others are skipped entirely |
 | `CINESRC_WORKERS` | `8` | Max concurrent rendition expansions (higher = faster scrape, more sidecar load) |
+| `STATIC_PROVIDERS` | `nebula` | Providers with static URLs, cached for `STATIC_CACHE_TTL` (repeats instant, sidecar untouched) |
+| `STATIC_CACHE_TTL` | `21600` | Cache seconds for static providers (6h) |
+| `SHORT_CACHE_TTL` | `60` | Cache seconds for everyone else (signed URLs go stale fast) |
 | `CINESRC_ENABLED` | `1` | `0` disables resolving (streams always empty) |
 | `ADDON_ID` / `ADDON_NAME` / `ADDON_VERSION` | `com.cinesrc.stremio` / `CineSrc` / `1.0.0` | Manifest identity |
 

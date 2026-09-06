@@ -30,7 +30,18 @@ MAX_PROBE_WORKERS = int(os.getenv("CINESRC_WORKERS", "8"))
 # Providers with no flag info are kept so nothing breaks if flags go missing.
 REGIONS = {f.strip().lower() for f in os.getenv("CINESRC_REGIONS", "us").split(",")
            if f.strip()}
+# Providers with static URLs (measured: Nebula serves the same master for
+# days) cache hits long; everyone else (signed/expiring URLs, e.g. Lisbon
+# 404s ~1 min after resolve) caches short. Repeats then skip the sidecar.
+STATIC_PROVIDERS = {p.strip().lower() for p in os.getenv("STATIC_PROVIDERS", "nebula").split(",")
+                    if p.strip()}
+STATIC_TTL = int(os.getenv("STATIC_CACHE_TTL", "21600"))
+SHORT_TTL = int(os.getenv("SHORT_CACHE_TTL", "60"))
 MAX_QUALITY = 1080  # cap (no 4K)
+
+
+def _ttl_for(pid: str | None) -> int:
+    return STATIC_TTL if (pid or "").lower() in STATIC_PROVIDERS else SHORT_TTL
 
 
 def _region_ok(prov: dict) -> bool:
@@ -58,10 +69,7 @@ def variant_exceeds_cap(attrs: str, cap: int = MAX_QUALITY) -> bool:
 class CinesrcExtractor:
     def __init__(self, timeout: float = 90.0):
         self.timeout = timeout
-        self._cache: dict = {}
-        # Short TTL: Lisbon-style signed segment URLs go stale fast
-        # (observed 404s ~1 min after resolve), so don't serve old hits.
-        self._ttl = 60
+        self._pcache: dict = {}  # (key, provider_id) -> {data, exp}
         self._down_until = 0.0  # skip fast when sidecar is known-down
         self._ids: dict = {}  # imdb -> tmdb (never expires)
 
@@ -93,15 +101,34 @@ class CinesrcExtractor:
         if not CINESRC_ENABLED or time.time() < self._down_until:
             return None
         key = (media_id, media_type, str(season), str(episode))
-        hit = self._cache.get(key)
-        if hit and hit["exp"] > time.time():
-            return hit["data"]
         try:
-            return self._resolve(key, media_id, media_type, season, episode)
+            out = self._resolve(key, media_id, media_type, season, episode)
         except Exception as e:
             log.warning("cinesrc resolve failed: %s", e)
             self._down_until = time.time() + 30
             return None
+        if out and media_type == "tv":
+            self._prefetch_next(media_id, season, episode)
+        return out
+
+    def _prefetch_next(self, media_id, season, episode) -> None:
+        """Best-effort background warm of S:E+1 so bingeing feels instant."""
+        try:
+            nxt = int(episode or 1) + 1
+        except (TypeError, ValueError):
+            return
+        key = (media_id, "tv", str(season), str(nxt))
+        if any(k[0] == key for k in self._pcache):
+            return
+        import threading
+
+        def _bg():
+            try:
+                self._resolve(key, media_id, "tv", season, nxt)
+            except Exception:
+                pass
+
+        threading.Thread(target=_bg, daemon=True).start()
 
     def _expand(self, res: dict) -> dict | None:
         """Expand one batch/provider result into renditions (thread-safe)."""
@@ -135,68 +162,83 @@ class CinesrcExtractor:
         params = {"id": lookup, "type": media_type}
         if media_type == "tv":
             params.update({"season": str(season or 1), "episode": str(episode or 1)})
-        try:
-            cat = self._get("/api/catalog", params)
-        except Exception:
-            self._down_until = time.time() + 60  # sidecar likely down
-            return None
+        ckey = ("cat", lookup, media_type)
+        cat = self._pcache.get(ckey)
+        if cat and cat["exp"] > time.time():
+            cat = cat["data"]
+        else:
+            try:
+                cat = self._get("/api/catalog", params)
+            except Exception:
+                self._down_until = time.time() + 60  # sidecar likely down
+                return None
+            self._pcache[ckey] = {"data": cat, "exp": time.time() + 120}
         providers = sorted(cat.get("providers", []), key=lambda p: -p.get("rank", 0))
         providers = [p for p in providers if _region_ok(p)]
-        # Single batch call: sidecar reuses ONE challenge host for all
-        # providers and probes them concurrently, so wall time ~= host
-        # creation + slowest probe, not N x host creation. Rendition
-        # expansion (plain master-playlist GETs) still runs concurrently
-        # here. Results are re-ordered by rank afterwards.
+        # Single batch call: the sidecar probes all providers in parallel
+        # (one challenge host each), so wall time ~= slowest probe, not the
+        # sum. Only STALE providers are probed — fresh per-provider cache
+        # hits are reused, so repeats are instant. Results are re-ordered by
+        # rank afterwards.
         todo = providers[:MAX_PROVIDERS_TRY]
         if not todo:
             return None
-        ids = ",".join(p.get("id") for p in todo if p.get("id"))
-        try:
-            batch = self._get("/api/stream/batch", {**params, "providers": ids})
-            results = batch.get("providers", [])
-            if not results:
-                return None
-        except Exception as e:
-            log.warning("cinesrc batch failed, falling back to per-provider: %s", e)
-            results = None
+        now = time.time()
         found: dict[str, dict] = {}
-        if results is None:
-            # Legacy sidecar without /api/stream/batch.
-            workers = max(1, min(len(todo), MAX_PROBE_WORKERS))
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futs = [pool.submit(self._probe, params, prov) for prov in todo]
-                for fut in futs:
-                    try:
-                        hit = fut.result()
-                    except Exception as e:
-                        log.warning("cinesrc probe failed: %s", e)
-                        continue
-                    if hit:
-                        found[hit["provider"]] = hit
-        else:
-            workers = max(1, min(len(results), MAX_PROBE_WORKERS))
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futs = [pool.submit(self._expand, res) for res in results]
-                for fut in futs:
-                    try:
-                        hit = fut.result()
-                    except Exception as e:
-                        log.warning("cinesrc expand failed: %s", e)
-                        continue
-                    if hit:
-                        found[hit["provider"]] = hit
+        stale = []
+        for prov in todo:
+            pid = prov.get("id")
+            hit = self._pcache.get((key, pid))
+            if hit and hit["exp"] > now:
+                found[pid] = hit["data"]
+            elif pid:
+                stale.append(prov)
+        if stale:
+            ids = ",".join(p.get("id") for p in stale if p.get("id"))
+            try:
+                batch = self._get("/api/stream/batch", {**params, "providers": ids})
+                results = batch.get("providers", [])
+            except Exception as e:
+                log.warning("cinesrc batch failed, falling back to per-provider: %s", e)
+                results = None
+            if results is None:
+                # Legacy sidecar without /api/stream/batch.
+                workers = max(1, min(len(stale), MAX_PROBE_WORKERS))
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futs = [pool.submit(self._probe, params, prov) for prov in stale]
+                    for fut in futs:
+                        try:
+                            hit = fut.result()
+                        except Exception as e:
+                            log.warning("cinesrc probe failed: %s", e)
+                            continue
+                        if hit:
+                            found[hit["provider"]] = hit
+            else:
+                workers = max(1, min(len(results), MAX_PROBE_WORKERS))
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futs = [pool.submit(self._expand, res) for res in results]
+                    for fut in futs:
+                        try:
+                            hit = fut.result()
+                        except Exception as e:
+                            log.warning("cinesrc expand failed: %s", e)
+                            continue
+                        if hit:
+                            found[hit["provider"]] = hit
+            for pid, hit in found.items():
+                self._pcache[(key, pid)] = {"data": hit,
+                                            "exp": now + _ttl_for(pid)}
         hits = [found[p.get("id")] for p in todo if p.get("id") in found]
         if not hits:
             return None
         flat = [r for h in hits for r in h["renditions"]]
-        payload = {"provider": hits[0]["provider"],
-                   "provider_name": hits[0]["provider_name"],
-                   "providers": [{"provider": h["provider"],
-                                  "provider_name": h["provider_name"],
-                                  "source": h["source"]} for h in hits],
-                   "renditions": flat}
-        self._cache[key] = {"data": payload, "exp": time.time() + self._ttl}
-        return payload
+        return {"provider": hits[0]["provider"],
+                "provider_name": hits[0]["provider_name"],
+                "providers": [{"provider": h["provider"],
+                               "provider_name": h["provider_name"],
+                               "source": h["source"]} for h in hits],
+                "renditions": flat}
 
     def _renditions(self, master_url: str) -> list[dict]:
         """Fetch master playlist, expand variants (capped at MAX_QUALITY).
