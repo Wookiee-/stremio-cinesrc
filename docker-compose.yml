@@ -1,0 +1,24 @@
+services:
+  stremio-cinesrc:
+    build: .
+    image: stremio-cinesrc
+    container_name: stremio-cinesrc
+    ports:
+      - "7001:7001"
+    environment:
+      - PORT=7001
+      - SIDECAR_PORT=8001
+      - CINESRC_URL=http://127.0.0.1:8001
+      - STREAM_MODE=proxy  # proxy | redirect | direct | raw (see README)
+      # - STREAM_MODE=redirect # playlists local, 307 per segment (~zero video bytes, but buffers on some players)
+      # - STREAM_MODE=direct   # absolute upstream segments, client never returns after playlists (buffers on most players)
+      # - STREAM_MODE=raw      # raw upstream URLs (stalls after 1st segment, experiments only)
+      # - CINESRC_PROVIDERS=12  # how many servers to probe/list per title (default 12 = all US)
+      # - ADDON_NAME=CineSrc
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7001/health', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
