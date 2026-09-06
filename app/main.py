@@ -69,6 +69,21 @@ MANIFEST = {
 app = FastAPI(title=ADDON_NAME)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
+
+# Granian doesn't handle X-Forwarded-Proto like uvicorn proxy_headers does,
+# so trust loopback forwards here to keep /hls URLs https:// behind nginx.
+@app.middleware("http")
+async def _proxy_headers(request: Request, call_next):
+    xfp = request.headers.get("x-forwarded-proto")
+    xff = request.headers.get("x-forwarded-for")
+    # Only trust if the direct peer is loopback (nginx on same box)
+    client_host = getattr(getattr(request, "client", None), "host", "")
+    if xfp and client_host in ("127.0.0.1", "::1", "localhost"):
+        # Override scheme for request.base_url used to build /hls links
+        request.scope["scheme"] = xfp.split(",")[0].strip()
+        if xff:
+            request.scope["client"] = (xff.split(",")[0].strip(), 0)
+    return await call_next(request)
 cinesrc = CinesrcExtractor()
 
 CINESRC_REFERER = "https://cinesrc.st/"

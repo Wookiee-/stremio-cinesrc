@@ -28,7 +28,7 @@ COPY run.py ./
 EXPOSE 7001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD python -c "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7001/health', timeout=5).status == 200 else 1)"
+  CMD python -c "import os,sys,urllib.request; p=os.getenv('PORT','7001'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=5).status == 200 else 1)"
 
 # addon supervises the sidecar (single process tree, one log stream)
 CMD ["sh", "-c", "exec python run.py --with-sidecar"]
