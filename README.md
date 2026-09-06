@@ -89,12 +89,44 @@ environment:
 ```
 
 Then put HTTPS in front (Stremio expects `https://` for non-local addons).
-Easiest is Caddy — one-liner reverse proxy with automatic certificates:
+With nginx + certbot:
 
+```sh
+apt install -y nginx certbot python3-certbot-nginx
+# /etc/nginx/sites-available/stremio-cinesrc (symlink into sites-enabled):
 ```
-your-domain.com {
-    reverse_proxy 127.0.0.1:7001
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    # video proxy: stream bytes straight through, don't buffer to disk
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_http_version 1.1;
+    proxy_read_timeout 120s;
+    proxy_send_timeout 120s;
+    client_max_body_size 1m;
+
+    location / {
+        proxy_pass http://127.0.0.1:7001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 }
+```
+
+```sh
+nginx -t && systemctl reload nginx
+certbot --nginx -d your-domain.com   # auto-renew via systemd timer
+```
+
+(`X-Forwarded-Proto` matters: `run.py` runs uvicorn with
+`proxy_headers=True` so generated `/hls` URLs keep the public `https://`
+scheme. Caddy alternative: `your-domain.com { reverse_proxy 127.0.0.1:7001 }`.)
 ```
 
 Install the addon in Stremio with `https://your-domain.com/manifest.json`.

@@ -80,7 +80,10 @@ def main() -> None:
     try:
         print(f"Serving addon on 0.0.0.0:{port} "
               f"(manifest: http://127.0.0.1:{port}/manifest.json)", flush=True)
-        uvicorn.run("app.main:app", host="0.0.0.0", port=port)
+        # proxy_headers: when behind nginx/Caddy, use X-Forwarded-Proto/For
+        # so generated /hls URLs keep the public https:// scheme.
+        uvicorn.run("app.main:app", host="0.0.0.0", port=port,
+                    proxy_headers=True, forwarded_allow_ips="127.0.0.1")
     finally:
         if proc is not None:
             print("Stopping sidecar ...", flush=True)
