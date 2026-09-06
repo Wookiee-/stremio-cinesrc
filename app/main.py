@@ -17,7 +17,6 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 import httpx
 
 from .extractor_cinesrc import CinesrcExtractor, variant_exceeds_cap
-from .extractor_vidlove import VidloveExtractor
 
 # Reuse TCP/TLS connections for /hls — HTTP/2 multiplexes many chunks over
 # fewer connections (needs h2 via requirements httpx[http2]).
@@ -58,7 +57,7 @@ MANIFEST = {
     "id": ADDON_ID,
     "version": ADDON_VERSION,
     "name": ADDON_NAME,
-    "description": "CineSrc + VidLove streams (up to 1080p).",
+    "description": "CineSrc streams (15 providers, up to 1080p).",
     "logo": "https://cinesrc.st/favicon.ico",
     "resources": ["stream"],
     "types": ["movie", "series"],
@@ -71,10 +70,8 @@ app = FastAPI(title=ADDON_NAME)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 cinesrc = CinesrcExtractor()
-vidlove = VidloveExtractor()
 
 CINESRC_REFERER = "https://cinesrc.st/"
-VIDLOVE_REFERER = "https://vidlove.cc/"
 
 
 def parse_stremio_id(sid: str) -> tuple[str, str, str | None, str | None]:
@@ -152,47 +149,6 @@ def to_cinesrc_streams(payload: dict, base_url: str) -> list:
     return streams
 
 
-def to_vidlove_streams(payload: dict, base_url: str) -> list:
-    streams = []
-    for r in payload.get("renditions", []):
-        q = r.get("quality") or ""
-        reso = r.get("resolution") or ""
-        mbps = r.get("mbps") or 0
-        name = f"VidLove {q}".strip()
-        bits = ["VidLove"]
-        if q:
-            bits.append(q)
-        if reso and reso != q:
-            bits.append(reso)
-        if mbps:
-            bits.append(f"{mbps} Mbps")
-        label = " • ".join(bits)
-        if STREAM_MODE == "raw":
-            s = {"url": r["url"],
-                 "title": label + " (raw)",
-                 "name": name,
-                 "behaviorHints": {
-                     "bingeGroup": f"vidlove-{q}" if q else "vidlove",
-                     "notWebReady": True,
-                     "proxyHeaders": {
-                         "request": {
-                             "Referer": VIDLOVE_REFERER,
-                             "Origin": VIDLOVE_REFERER.rstrip("/"),
-                             "User-Agent": UA,
-                         }
-                     },
-                 }}
-            streams.append(s)
-            continue
-        s = {"url": proxy_url(base_url, r["url"], VIDLOVE_REFERER),
-             "title": label,
-             "name": name,
-             "behaviorHints": {"bingeGroup": f"vidlove-{q}" if q else "vidlove",
-                               "notWebReady": False}}
-        streams.append(s)
-    return streams
-
-
 @app.get("/manifest.json")
 def manifest():
     return MANIFEST
@@ -213,32 +169,20 @@ def stream(ctype: str, sid: str, request: Request):
     if ctype == "series":
         mtype, season, episode = "tv", season or "1", episode or "1"
     base = str(request.base_url).rstrip("/")
-    streams = []
     cs = cinesrc.get_stream(lookup, mtype, season, episode)
     if cs:
-        streams += to_cinesrc_streams(cs, base)
-    vl = vidlove.get_stream(lookup, mtype, season, episode)
-    if vl:
-        streams += to_vidlove_streams(vl, base)
-    return {"streams": streams}
+        return {"streams": to_cinesrc_streams(cs, base)}
+    return {"streams": []}
 
 
 @app.get("/extract")
 def extract(id: str, type: str = "movie", season: str | None = None,
-            episode: str | None = None, source: str | None = None):
-    if source in (None, "cinesrc"):
-        payload = cinesrc.get_stream(id, type, season, episode)
-        if payload:
-            return {"success": True, "source": "cinesrc", **payload}
-        if source == "cinesrc":
-            return JSONResponse({"success": False, "error": "no stream found"},
-                                status_code=404)
-    if source in (None, "vidlove"):
-        payload = vidlove.get_stream(id, type, season, episode)
-        if payload:
-            return {"success": True, "source": "vidlove", **payload}
-    return JSONResponse({"success": False, "error": "no stream found"},
-                        status_code=404)
+            episode: str | None = None):
+    payload = cinesrc.get_stream(id, type, season, episode)
+    if not payload:
+        return JSONResponse({"success": False, "error": "no stream found"},
+                            status_code=404)
+    return {"success": True, **payload}
 
 
 @app.get("/health")
