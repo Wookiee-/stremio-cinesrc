@@ -20,10 +20,11 @@ from .extractor_cinesrc import CinesrcExtractor, variant_exceeds_cap
 
 # Reuse TCP/TLS connections for /hls — avoids a new handshake per 5MB chunk
 # while still buffering the whole chunk (needed for correct append).
+# http2 left off (needs `h2` extra, not in requirements) — keep-alive over
+# HTTP/1.1 already gives the speedup.
 _h_client = httpx.Client(
     timeout=httpx.Timeout(25, connect=10),
     follow_redirects=True,
-    http2=True,
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
 )
 
