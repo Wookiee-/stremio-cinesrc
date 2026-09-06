@@ -230,12 +230,56 @@ def hls_proxy(url: str, request: Request, referer: str | None = None,
         # for mid-stream redirect follows. Range seeking still works —
         # players re-issue Range to the follow-up URL.
         return RedirectResponse(url, status_code=302)
+    from fastapi.responses import StreamingResponse
+    # Stream (don't buffer): peek at the first bytes to detect playlists,
+    # then either rewrite (playlists, tiny) or pass bytes straight through
+    # (segments, MBs — first byte out immediately instead of after the full
+    # chunk downloads into RAM). The upstream response is closed when the
+    # generator is exhausted (or on error below).
+    client = httpx.Client(timeout=120, follow_redirects=True)
     try:
-        r = httpx.get(url, headers={"Referer": ref, "User-Agent": UA},
-                      timeout=25, follow_redirects=True)
+        r = client.send(
+            client.build_request(
+                "GET", url, headers={"Referer": ref, "User-Agent": UA}),
+            stream=True)
+        head = b""
+        it = r.iter_bytes(chunk_size=65536)
+        try:
+            for chunk in it:
+                head += chunk
+                if len(head) >= 4096 or "EXTM3U" in head[:500].decode(
+                        "utf8", "ignore"):
+                    break
+        except Exception:
+            r.close()
+            raise
+        if "EXTM3U" not in head[:500].decode("utf8", "ignore"):
+            status = r.status_code
+
+            def _gen(_it=it, _head=head, _r=r, _c=client):
+                try:
+                    yield _head
+                    for c in _it:
+                        yield c
+                finally:
+                    _r.close()
+                    _c.close()
+
+            return StreamingResponse(_gen(), status_code=status,
+                                     media_type="application/octet-stream")
+        body = head.decode("utf8", "ignore")
+        try:
+            for chunk in it:
+                body += chunk.decode("utf8", "ignore")
+        finally:
+            r.close()
+            client.close()
     except Exception as e:
+        try:
+            client.close()
+        except Exception:
+            pass
         return JSONResponse({"error": str(e)}, status_code=502)
-    body = r.text
     if "EXTM3U" in body[:500]:
         base = url.rsplit("/", 1)[0] + "/"
 
