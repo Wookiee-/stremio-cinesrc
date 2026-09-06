@@ -15,14 +15,12 @@ Fast Stremio addon that resolves **CineSrc** streams to playable `m3u8` URLs Str
 
 Stremio gets one entry per rendition per working server (e.g. name
 `CineSrc 1080p`, title `VidCloud • 1080p • 1920x1080 • 4.7 Mbps`).
-How video bytes flow is one switch, `STREAM_MODE` (default `proxy`):
-Stremio plays `/hls` URLs and the VPS proxies playlists (rewritten, correct
-content-type) plus every segment — works on all clients incl. Web and Nuvio,
-at the cost of VPS video bandwidth. The other modes (`redirect`, `direct`,
-`raw`) try to keep video bytes off the VPS, but these providers disguise
-playlists/segments as `image/jpeg` + `.jpg/.png/.html`, so players stall or
-buffer on them. `redirect` is closest (playlists local, 307 per segment) but
-buffered in testing; `proxy` is the reliable default.
+How video bytes flow is one switch, `STREAM_MODE` (default `raw`):
+`raw` returns upstream `m3u8` URLs with `proxyHeaders` (Referer/Origin/UA) so
+video flows client → provider directly — zero VPS video bytes. Verified
+working in **Nuvio**; use `proxy` for **Stremio Desktop/Web** if `raw` stalls
+(Stremio's local player buffers on the disguised segments). `redirect`/
+`direct` are also zero-byte but add hops/buffering.
 
 ## Prerequisites
 
@@ -79,13 +77,12 @@ docker compose logs -f
 # or: docker build -t stremio-cinesrc . && docker run -d --name stremio-cinesrc -p 7001:7001 --restart unless-stopped stremio-cinesrc
 ```
 
-To save VPS bandwidth you can try `STREAM_MODE=redirect` (playlists local,
-307 per segment, ~zero video bytes), but note it buffered in testing while
-`proxy` stays smooth:
+VPS bandwidth: `raw` (default) uses zero video bytes; if Stremio stalls,
+switch that host to `proxy`:
 
 ```yaml
 environment:
-  - STREAM_MODE=redirect
+  - STREAM_MODE=proxy  # Stremio fallback if raw buffers
 ```
 
 Then put HTTPS in front (Stremio expects `https://` for non-local addons).
@@ -150,7 +147,7 @@ bitrate). `CINESRC_PROVIDERS` controls how many servers are probed/listed
 | `SIDECAR_PORT` | `8001` | Sidecar HTTP port (must match the port in `CINESRC_URL`) |
 | `WITH_SIDECAR` | `0` | `1` = `run.py` also starts the sidecar in the same window (same as `--with-sidecar`) |
 | `CINESRC_URL` | `http://127.0.0.1:8001` | Where the addon reaches the sidecar |
-| `STREAM_MODE` | `proxy` | `proxy` = VPS proxies every byte (reliable default, max bandwidth) · `redirect` / `direct` / `raw` = attempts to keep video bytes off the VPS; none play reliably on these providers (disguised segments, Referer gates, expiring URLs) — experiments only |
+| `STREAM_MODE` | `raw` | `raw` = upstream URLs + proxyHeaders, zero VPS bytes (verified in Nuvio) · `proxy` = VPS proxies every byte (Stremio fallback if raw stalls) · `redirect` / `direct` = also zero-byte, extra hop/buffering |
 | `CINESRC_PROVIDERS` | `12` | How many servers to probe/list per title (`1` = fastest, first server only; `12` ~= all `us`) |
 | `CINESRC_REGIONS` | `us` | Only probe servers flagged with these regions (comma-separated, e.g. `us,fr`); others are skipped entirely |
 | `CINESRC_WORKERS` | `8` | Max concurrent rendition expansions (higher = faster scrape, more sidecar load) |
@@ -160,10 +157,7 @@ bitrate). `CINESRC_PROVIDERS` controls how many servers are probed/listed
 | `CINESRC_ENABLED` | `1` | `0` disables resolving (streams always empty) |
 | `ADDON_ID` / `ADDON_NAME` / `ADDON_VERSION` | `com.cinesrc.stremio` / `CineSrc` / `1.0.0` | Manifest identity |
 
-> Note: the default `proxy` mode carries all video traffic, so plan VPS
-> bandwidth accordingly (~4.7 Mbps per viewer). Also, some providers dislike
-> datacenter IPs — if resolves start failing on the VPS while working from
-> home, that's why (the resolve still happens on the VPS in every mode).
+> Note: `proxy` carries all video traffic (~4.7 Mbps per viewer); `raw`/`redirect`/`direct` are zero-byte. Also, some providers dislike datacenter IPs — if resolves start failing on the VPS while working from home, that's why (the resolve still happens on the VPS in every mode).
 
 ## Endpoints
 

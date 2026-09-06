@@ -9,10 +9,10 @@ services:
       - PORT=7001
       - SIDECAR_PORT=8001
       - CINESRC_URL=http://127.0.0.1:8001
-      - STREAM_MODE=proxy  # proxy | redirect | direct | raw (see README)
-      # - STREAM_MODE=redirect # playlists local, 307 per segment (~zero video bytes, but buffers on some players)
-      # - STREAM_MODE=direct   # absolute upstream segments, client never returns after playlists (buffers on most players)
-      # - STREAM_MODE=raw      # raw upstream URLs (stalls after 1st segment, experiments only)
+      - STREAM_MODE=raw  # raw = zero VPS video bytes via proxyHeaders (works in Nuvio, see README)
+      # - STREAM_MODE=proxy    # VPS proxies every byte (use for Stremio Desktop/Web if raw stalls)
+      # - STREAM_MODE=redirect # playlists local, 302 per segment (also zero bytes, but extra hop)
+      # - STREAM_MODE=direct   # absolute upstream segments (buffers on most players)
       # - CINESRC_PROVIDERS=12  # how many servers to probe/list per title (default 12 = all US)
       # - ADDON_NAME=CineSrc
     healthcheck:
