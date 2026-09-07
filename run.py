@@ -76,30 +76,19 @@ def main() -> None:
     proc = start_sidecar() if args.with_sidecar else None
     port = int(os.getenv("PORT", "7001"))
     workers = int(os.getenv("WORKERS", "2"))
-    use_granian = os.getenv("SERVER", "granian").lower() == "granian"
     try:
         print(f"Serving addon on 0.0.0.0:{port} "
-              f"(manifest: http://127.0.0.1:{port}/manifest.json) "
-              f"[{('granian' if use_granian else 'uvicorn')} x{workers}]",
+              f"(manifest: http://127.0.0.1:{port}/manifest.json) [granian x{workers}]",
               flush=True)
-        if use_granian:
-            try:
-                from granian import Granian
-            except ImportError:
-                sys.exit("[ERROR] granian not installed. pip install granian or set SERVER=uvicorn")
-            # Granian handles proxy headers via forwarded_allow_ips / proxy protocol
-            Granian(
-                "app.main:app",
-                address="0.0.0.0",
-                port=port,
-                workers=workers,
-                interface="asgi",
-            ).serve()
-        else:
-            import uvicorn
-            uvicorn.run("app.main:app", host="0.0.0.0", port=port,
-                        workers=workers,
-                        proxy_headers=True, forwarded_allow_ips="127.0.0.1")
+        from granian import Granian
+
+        Granian(
+            "app.main:app",
+            address="0.0.0.0",
+            port=port,
+            workers=workers,
+            interface="asgi",
+        ).serve()
     finally:
         if proc is not None:
             print("Stopping sidecar ...", flush=True)
