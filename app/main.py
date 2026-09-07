@@ -18,6 +18,93 @@ import httpx
 
 from .extractor_cinesrc import CinesrcExtractor, variant_exceeds_cap
 
+# Single-port mode: FastAPI can autostart the Node sidecar internally so only
+# 7001 is exposed. The sidecar still runs (Node hidden inside the same
+# container/process tree) but no second public port is needed.
+import contextlib
+import socket
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+_SIDECAR_PROC: subprocess.Popen | None = None
+
+def _wait_for_port(host: str, port: int, timeout: float = 15.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=1):
+                return True
+        except OSError:
+            time.sleep(0.2)
+    return False
+
+def _pump(stream, prefix: str) -> None:
+    for line in iter(stream.readline, ""):
+        sys.stdout.write(f"{prefix}{line}")
+        sys.stdout.flush()
+
+def _start_sidecar_internal() -> subprocess.Popen | None:
+    global _SIDECAR_PROC
+    if os.getenv("SIDECAR_AUTOSTART", "1") != "1":
+        return None
+    # if something already answers on SIDECAR_URL, don't start another
+    try:
+        from urllib.parse import urlparse
+
+        u = urlparse(os.getenv("CINESRC_URL", "http://127.0.0.1:8001"))
+        if _wait_for_port(u.hostname or "127.0.0.1", u.port or 8001, timeout=1.0):
+            return None
+    except Exception:
+        pass
+    sidecar_port = os.getenv("SIDECAR_PORT", "8001")
+    env = {**os.environ, "SIDECAR_PORT": sidecar_port}
+    root = Path(__file__).resolve().parents[1]
+    try:
+        proc = subprocess.Popen(
+            ["node", str(root / "sidecar" / "src" / "server.js")],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+    except FileNotFoundError:
+        print("[sidecar] Node.js not found — sidecar autostart skipped", flush=True)
+        return None
+    threading.Thread(target=_pump, args=(proc.stdout, "[sidecar] "), daemon=True).start()
+    if not _wait_for_port("127.0.0.1", int(sidecar_port), timeout=15.0):
+        print("[sidecar] failed to come up", flush=True)
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        return None
+    print(f"[sidecar] autostarted on 127.0.0.1:{sidecar_port}", flush=True)
+    _SIDECAR_PROC = proc
+    return proc
+
+def _stop_sidecar_internal() -> None:
+    global _SIDECAR_PROC
+    if _SIDECAR_PROC is not None:
+        try:
+            _SIDECAR_PROC.terminate()
+            _SIDECAR_PROC.wait(timeout=5)
+        except Exception:
+            try:
+                _SIDECAR_PROC.kill()
+            except Exception:
+                pass
+        _SIDECAR_PROC = None
+
+@contextlib.asynccontextmanager
+async def _lifespan(app: FastAPI):
+    _start_sidecar_internal()
+    yield
+    _stop_sidecar_internal()
+
 # Reuse TCP/TLS connections for /hls — HTTP/2 multiplexes many chunks over
 # fewer connections (needs h2 via requirements httpx[http2]).
 _h_client = httpx.Client(
@@ -66,7 +153,7 @@ MANIFEST = {
     "behaviorHints": {"configurable": False, "configurationRequired": False},
 }
 
-app = FastAPI(title=ADDON_NAME)
+app = FastAPI(title=ADDON_NAME, lifespan=_lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 
