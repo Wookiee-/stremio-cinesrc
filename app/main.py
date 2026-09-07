@@ -263,43 +263,11 @@ def hls_proxy(url: str, request: Request, referer: str | None = None,
         # for mid-stream redirect follows. Range seeking still works —
         # players re-issue Range to the follow-up URL.
         return RedirectResponse(url, status_code=302)
-    from fastapi.responses import StreamingResponse
     try:
-        r = _h_client.send(
-            _h_client.build_request("GET", url,
-                                    headers={"Referer": ref, "User-Agent": UA}),
-            stream=True)
-        head = b""
-        it = r.iter_bytes(chunk_size=65536)
-        try:
-            for chunk in it:
-                head += chunk
-                if len(head) >= 4096 or "EXTM3U" in head[:500].decode("utf8", "ignore"):
-                    break
-        except Exception:
-            r.close()
-            raise
-        if "EXTM3U" not in head[:500].decode("utf8", "ignore"):
-            status = r.status_code
-
-            def _gen(_it=it, _head=head, _r=r):
-                try:
-                    yield _head
-                    for c in _it:
-                        yield c
-                finally:
-                    _r.close()
-
-            return StreamingResponse(_gen(), status_code=status,
-                                     media_type="application/octet-stream")
-        body = head.decode("utf8", "ignore")
-        try:
-            for chunk in it:
-                body += chunk.decode("utf8", "ignore")
-        finally:
-            r.close()
+        r = _h_client.get(url, headers={"Referer": ref, "User-Agent": UA})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=502)
+    body = r.text
     if "EXTM3U" in body[:500]:
         base = url.rsplit("/", 1)[0] + "/"
 
