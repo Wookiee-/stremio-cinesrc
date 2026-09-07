@@ -15,12 +15,9 @@ Fast Stremio addon that resolves **CineSrc** streams to playable `m3u8` URLs Str
 
 Stremio gets one entry per rendition per working server (e.g. name
 `CineSrc 1080p`, title `VidCloud • 1080p • 1920x1080 • 4.7 Mbps`).
-How video bytes flow is one switch, `STREAM_MODE` (default `raw`):
-`raw` returns upstream `m3u8` URLs with `proxyHeaders` (Referer/Origin/UA) so
-video flows client → provider directly — zero VPS video bytes. Verified
-working in **Nuvio**; use `proxy` for **Stremio Desktop/Web** if `raw` stalls
-(Stremio's local player buffers on the disguised segments). `redirect`/
-`direct` are also zero-byte but add hops/buffering.
+Streams are direct: the addon returns upstream URLs with
+`behaviorHints.proxyHeaders` (Referer + User-Agent), so video flows straight
+from the host to the player — noone proxies video, no server bandwidth.
 
 ## Prerequisites
 
