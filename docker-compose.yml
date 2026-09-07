@@ -1,24 +1,29 @@
 services:
   stremio-cinesrc:
-    build: .
-    image: stremio-cinesrc
+    build:
+      context: .
+      dockerfile: Dockerfile.python
     container_name: stremio-cinesrc
+    restart: unless-stopped
     ports:
-      - "7001:7001"
+      - "127.0.0.1:7001:7001"
     environment:
       - PORT=7001
+      - HOST=0.0.0.0
       - SIDECAR_PORT=8001
       - CINESRC_URL=http://127.0.0.1:8001
-      - STREAM_MODE=raw  # raw = zero VPS video bytes via proxyHeaders (works in Nuvio, see README)
-      # - STREAM_MODE=proxy    # VPS proxies every byte (use for Stremio Desktop/Web if raw stalls)
-      # - STREAM_MODE=redirect # playlists local, 302 per segment (also zero bytes, but extra hop)
-      # - STREAM_MODE=direct   # absolute upstream segments (buffers on most players)
+      - STREAM_MODE=raw  # raw = zero VPS bytes via proxyHeaders (Nuvio); proxy for Stremio if raw stalls
+      # - STREAM_MODE=proxy    # VPS proxies every byte (Stremio fallback)
       # - CINESRC_PROVIDERS=12  # how many servers to probe/list per title (default 12 = all US)
-      # - ADDON_NAME=CineSrc
+    # no networks/volumes needed - host nginx proxies to 127.0.0.1:7001
+    # Python direct: returns upstream URLs + proxyHeaders, VPS only scrapes, 0 video bandwidth
     healthcheck:
-      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7001/health', timeout=5).status == 200 else 1)"]
+      test: ["CMD", "python", "-c", "import os,sys,urllib.request; p=os.getenv('PORT','7001'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=5).status == 200 else 1)"]
       interval: 30s
       timeout: 5s
       start_period: 20s
       retries: 3
-    restart: unless-stopped
+
+# Host nginx handles TLS (see nginx/cinesrc.conf if added, or use setup from README)
+#   proxy_pass http://127.0.0.1:7001;
+#   sudo certbot --nginx -d cinesrc.ddns.net

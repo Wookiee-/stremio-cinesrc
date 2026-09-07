@@ -88,6 +88,15 @@ cinesrc = CinesrcExtractor()
 
 CINESRC_REFERER = "https://cinesrc.st/"
 
+# allow `python -m app.main` like stremio-movy (Granian entrypoint)
+if __name__ == "__main__":
+    import os as _os
+    from granian import Granian
+
+    _port = int(_os.getenv("PORT", "7001"))
+    _host = _os.getenv("HOST", "0.0.0.0")
+    Granian("app.main:app", interface="asgi", address=_host, port=_port).serve()
+
 
 def parse_stremio_id(sid: str) -> tuple[str, str, str | None, str | None]:
     """'tt123[:S:E]' / 'tmdb:123[:S:E]' -> (lookup, movie|tv, season, episode)."""
