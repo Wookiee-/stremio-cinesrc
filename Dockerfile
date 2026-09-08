@@ -8,8 +8,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     CINESRC_ENABLED=1 \
     CINESRC_URL=http://127.0.0.1:8001
 
-# Node.js 22 (for the CineSrc sidecar)
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+# Node.js 22 (for the CineSrc sidecar) + canvas deps
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates fontconfig fonts-dejavu-core \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
