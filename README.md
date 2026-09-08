@@ -82,18 +82,22 @@ environment:
   - STREAM_MODE=proxy  # Stremio fallback if direct buffers
 ```
 
-Then put HTTPS in front (Stremio expects `https://` for non-local addons).
-With nginx + certbot:
+Then put HTTPS in front (Stremio expects `https://` for non-local addons) — host nginx, not Docker:
 
 ```sh
-apt install -y nginx certbot python3-certbot-nginx
-# /etc/nginx/sites-available/stremio-cinesrc (symlink into sites-enabled):
+# host nginx (like stremio-movy)
+sudo cp nginx/cinesrc.conf /etc/nginx/sites-available/cinesrc.ddns.net
+sudo ln -sf /etc/nginx/sites-available/cinesrc.ddns.net /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d cinesrc.ddns.net  # or: sudo ./setup-nginx.sh --email you@example.com
 ```
+
+`nginx/cinesrc.conf` proxies `cinesrc.ddns.net` → `127.0.0.1:7001` (host → Docker, `STREAM_MODE=direct` is 0 video bandwidth). For manual setup:
 
 ```nginx
 server {
     listen 80;
-    server_name your-domain.com;
+    server_name cinesrc.ddns.net;
 
     # video proxy: stream bytes straight through, don't buffer to disk
     proxy_buffering off;
