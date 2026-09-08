@@ -24,7 +24,7 @@ log = logging.getLogger("cinesrc")
 SIDECAR_URL = os.getenv("CINESRC_URL", "http://127.0.0.1:8001").rstrip("/")
 CINESRC_ENABLED = os.getenv("CINESRC_ENABLED", "1") == "1"
 MAX_PROVIDERS_TRY = int(os.getenv("CINESRC_PROVIDERS", "12"))
-MAX_PROBE_WORKERS = int(os.getenv("CINESRC_WORKERS", "8"))
+MAX_PROBE_WORKERS = int(os.getenv("CINESRC_WORKERS", "1"))
 # Comma-separated region flags; only providers carrying one of these are
 # probed (upstream flags look like ["us"], ["fr"], ["de"], ["mx"]).
 # Providers with no flag info are kept so nothing breaks if flags go missing.

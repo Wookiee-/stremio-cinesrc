@@ -75,7 +75,7 @@ def main() -> None:
 
     proc = start_sidecar() if args.with_sidecar else None
     port = int(os.getenv("PORT", "7001"))
-    workers = int(os.getenv("WORKERS", "2"))
+    workers = int(os.getenv("WORKERS", "1"))
     try:
         print(f"Serving addon on 0.0.0.0:{port} "
               f"(manifest: http://127.0.0.1:{port}/manifest.json) [granian x{workers}]",

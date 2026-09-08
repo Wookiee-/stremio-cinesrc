@@ -12,9 +12,9 @@ services:
       - HOST=0.0.0.0
       - SIDECAR_PORT=8001
       - CINESRC_URL=http://127.0.0.1:8001
-      - STREAM_MODE=raw  # raw = zero VPS video bytes via proxyHeaders (Nuvio); proxy for Stremio if raw stalls
+      - STREAM_MODE=direct  # direct = zero VPS video bytes via proxyHeaders (Nuvio); proxy for Stremio if direct stalls
       - SIDECAR_AUTOSTART=1  # single-port: FastAPI autostarts sidecar internally, only 7001 exposed
-      # - STREAM_MODE=proxy    # VPS proxies every byte (Stremio fallback)
+      # - STREAM_MODE=proxy      # VPS proxies every byte (Stremio fallback if direct stalls)
       # - CINESRC_PROVIDERS=12  # how many servers to probe/list per title (default 12 = all US)
     # no networks/volumes needed - host nginx proxies to 127.0.0.1:7001
     # Python direct: returns upstream URLs + proxyHeaders, VPS only scrapes, 0 video bandwidth

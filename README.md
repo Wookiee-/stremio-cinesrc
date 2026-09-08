@@ -17,7 +17,7 @@ Stremio gets one entry per rendition per working server (e.g. name
 `CineSrc 1080p`, title `VidCloud • 1080p • 1920x1080 • 4.7 Mbps`).
 Streams are direct: the addon returns upstream URLs with
 `behaviorHints.proxyHeaders` (Referer + User-Agent), so video flows straight
-from the host to the player — noone proxies video, no server bandwidth.
+from the host to the player — noone proxies video, no server bandwidth, 0 readahead.
 
 ## Prerequisites
 
@@ -79,7 +79,7 @@ switch that host to `proxy`:
 
 ```yaml
 environment:
-  - STREAM_MODE=proxy  # Stremio fallback if raw buffers
+  - STREAM_MODE=proxy  # Stremio fallback if direct buffers
 ```
 
 Then put HTTPS in front (Stremio expects `https://` for non-local addons).
@@ -144,7 +144,7 @@ bitrate). `CINESRC_PROVIDERS` controls how many servers are probed/listed
 | `SIDECAR_PORT` | `8001` | Sidecar HTTP port (must match the port in `CINESRC_URL`) |
 | `WITH_SIDECAR` | `0` | `1` = `run.py` also starts the sidecar in the same window (same as `--with-sidecar`) |
 | `CINESRC_URL` | `http://127.0.0.1:8001` | Where the addon reaches the sidecar |
-| `STREAM_MODE` | `raw` | `raw` = upstream URLs + proxyHeaders, zero VPS bytes (verified in Nuvio) · `proxy` = VPS proxies every byte (Stremio fallback if raw stalls) · `redirect` / `direct` = also zero-byte, extra hop/buffering |
+| `STREAM_MODE` | `direct` | `direct` = upstream URLs + proxyHeaders, zero VPS bytes, 0 readahead (verified in Nuvio) · `proxy` = VPS proxies every byte (Stremio fallback if direct stalls) · `redirect` = also zero-byte via 302, extra hop |
 | `CINESRC_PROVIDERS` | `12` | How many servers to probe/list per title (`1` = fastest, first server only; `12` ~= all `us`) |
 | `CINESRC_REGIONS` | `us` | Only probe servers flagged with these regions (comma-separated, e.g. `us,fr`); others are skipped entirely |
 | `CINESRC_WORKERS` | `8` | Max concurrent rendition expansions (higher = faster scrape, more sidecar load) |

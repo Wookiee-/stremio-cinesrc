@@ -105,35 +105,29 @@ async def _lifespan(app: FastAPI):
     yield
     _stop_sidecar_internal()
 
-# Reuse TCP/TLS connections for /hls — HTTP/2 multiplexes many chunks over
-# fewer connections (needs h2 via requirements httpx[http2]).
+# Single upstream socket — gentle on providers, scan all 12 sequentially
 _h_client = httpx.Client(
     timeout=httpx.Timeout(25, connect=10),
     follow_redirects=True,
     http2=True,
-    limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+    limits=httpx.Limits(max_keepalive_connections=1, max_connections=1),
 )
 
 ADDON_ID = os.getenv("ADDON_ID", "com.cinesrc.stremio")
 ADDON_NAME = os.getenv("ADDON_NAME", "CineSrc")
 ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.0")
-# One switch for how video bytes reach the player (default: proxy).
-#   proxy    - Stremio plays /hls URLs, VPS proxies every byte (works
-#              everywhere, max VPS bandwidth).
-#   redirect - /hls serves playlists itself (rewritten, correct content-type,
-#              a few KB) and 307-redirects each segment/init file straight to
-#              upstream (307 preserves Range for seeking). ~Zero VPS video
-#              bytes, one tiny redirect per segment, works on all clients.
-#   direct   - /hls serves playlists once with absolute upstream segment URLs
-#              inside: after that the client never contacts the VPS again.
-#              Some players reject the raw disguised segments (.jpg/.png/
-#              .html served as image/jpeg) and buffer — fall back to redirect.
-#   raw      - Stremio gets raw upstream m3u8 URLs + proxyHeaders (needs
-#              Desktop/Android; broken on these providers: players stall after
-#              the first segment). Kept for experiments only.
-STREAM_MODE = os.getenv("STREAM_MODE", "proxy").strip().lower()
-if STREAM_MODE not in ("proxy", "redirect", "direct", "raw"):
-    STREAM_MODE = "proxy"
+# One switch: proxy vs direct. Direct = upstream m3u8 + proxyHeaders, 0 VPS video bytes, 0 readahead.
+#   proxy  - /hls proxy, every byte via VPS (Stremio fallback if direct stalls)
+#   direct - upstream URLs + proxyHeaders (Referer/UA), video client->provider, no VPS bytes
+STREAM_MODE = os.getenv("STREAM_MODE", "direct").strip().lower()
+if STREAM_MODE == "raw":
+    STREAM_MODE = "direct"  # backwards compat: raw was direct
+if STREAM_MODE not in ("proxy", "direct"):
+    # redirect was an old zero-byte via 302, now same as direct
+    if STREAM_MODE == "redirect":
+        STREAM_MODE = "direct"
+    else:
+        STREAM_MODE = "direct"
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -234,9 +228,9 @@ def to_cinesrc_streams(payload: dict, base_url: str) -> list:
         if mbps:
             bits.append(f"{mbps} Mbps")
         label = " • ".join(bits)
-        if STREAM_MODE == "raw":
+        if STREAM_MODE == "direct":
             s = {"url": r["url"],
-                 "title": label + " (raw)",
+                 "title": label + " (direct)",
                  "name": name,
                  "behaviorHints": {
                      "bingeGroup": f"cinesrc-{q}" if q else "cinesrc",
@@ -345,11 +339,6 @@ def hls_proxy(url: str, request: Request, referer: str | None = None,
                 status_code=200,
                 media_type="application/octet-stream" if seg == "1"
                 else "application/vnd.apple.mpegurl")
-    if seg == "1" and STREAM_MODE == "redirect":
-        # 302 (not 307): identical zero-byte flow, but wider player support
-        # for mid-stream redirect follows. Range seeking still works —
-        # players re-issue Range to the follow-up URL.
-        return RedirectResponse(url, status_code=302)
     try:
         r = _h_client.get(url, headers={"Referer": ref, "User-Agent": UA})
     except Exception as e:
@@ -366,10 +355,6 @@ def hls_proxy(url: str, request: Request, referer: str | None = None,
                     urllib.parse.urlsplit(url).query).get("token", [""])[0]
                 if tk:
                     absu += ("&" if "?" in absu else "?") + "token=" + tk
-            if is_seg and STREAM_MODE == "direct":
-                # absolute upstream URL straight into the playlist: the
-                # client never comes back to the VPS for this segment.
-                return absu
             return proxy_url(str(request.base_url).rstrip("/"), absu,
                              referer if referer else None, seg=is_seg)
 
