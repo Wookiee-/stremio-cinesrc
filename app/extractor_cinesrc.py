@@ -80,9 +80,16 @@ class CinesrcExtractor:
             timeout=httpx.Timeout(self.timeout, connect=10),
             follow_redirects=True,
             http2=True,
-            limits=httpx.Limits(max_keepalive_connections=1,
-                                max_connections=1),
+            limits=httpx.Limits(max_keepalive_connections=5,
+                                max_connections=10),
         )
+
+    def close(self) -> None:
+        """Release the persistent socket (call on shutdown/reload)."""
+        try:
+            self._client.close()
+        except Exception:
+            pass
 
     def _get(self, path: str, params: dict):
         r = self._client.get(f"{SIDECAR_URL}{path}", params=params)

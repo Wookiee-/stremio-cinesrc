@@ -137,6 +137,7 @@ async def _lifespan(app: FastAPI):
     await asyncio.to_thread(_start_sidecar_internal)
     yield
     _stop_sidecar_internal()
+    cinesrc.close()
 
 # Single upstream socket — gentle on providers, scan all 12 sequentially
 _h_client = httpx.Client(
