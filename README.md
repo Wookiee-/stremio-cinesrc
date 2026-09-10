@@ -137,8 +137,9 @@ Install the addon in Stremio with `https://your-domain.com/manifest.json`.
 
 CineSrc entries appear as `CineSrc 1080p` with details like
 `VidCloud • 1080p • 1920x1080 • 4.7 Mbps` (server • quality • resolution •
-bitrate). `CINESRC_PROVIDERS` controls how many servers are probed/listed
-(default 12 ~= all `us`). If the sidecar isn't running, the addon returns no streams.
+bitrate). `CINESRC_PROVIDERS` controls how many top-ranked servers are
+probed/listed per title (default 5 — first 5 that have the stream, no
+fallbacks past them). If the sidecar isn't running, the addon returns no streams.
 
 ## Config
 
@@ -149,7 +150,7 @@ bitrate). `CINESRC_PROVIDERS` controls how many servers are probed/listed
 | `WITH_SIDECAR` | `0` | `1` = `run.py` also starts the sidecar in the same window (same as `--with-sidecar`) |
 | `CINESRC_URL` | `http://127.0.0.1:8001` | Where the addon reaches the sidecar |
 | `STREAM_MODE` | `direct` | `direct` = upstream URLs + proxyHeaders, zero VPS bytes, 0 readahead (verified in Nuvio) · `proxy` = VPS proxies every byte (Stremio fallback if direct stalls) · `redirect` = also zero-byte via 302, extra hop |
-| `CINESRC_PROVIDERS` | `12` | How many servers to probe/list per title (`1` = fastest, first server only; `12` ~= all `us`) |
+| `CINESRC_PROVIDERS` | `5` | Top-ranked servers probed per title (first 5 that have the stream, no fallbacks) |
 | `CINESRC_REGIONS` | `us` | Only probe servers flagged with these regions (comma-separated, e.g. `us,fr`); others are skipped entirely |
 | `CINESRC_WORKERS` | `8` | Max concurrent rendition expansions (higher = faster scrape, more sidecar load) |
 | `STATIC_PROVIDERS` | `nebula` | Providers with static URLs, cached for `STATIC_CACHE_TTL` (repeats instant, sidecar untouched) |

@@ -15,7 +15,7 @@ services:
       - STREAM_MODE=direct  # direct = zero VPS video bytes via proxyHeaders (Nuvio); proxy for Stremio if direct stalls
       - SIDECAR_AUTOSTART=1  # single-port: FastAPI autostarts sidecar internally, only 7001 exposed
       # - STREAM_MODE=proxy      # VPS proxies every byte (Stremio fallback if direct stalls)
-      # - CINESRC_PROVIDERS=12  # how many servers to probe/list per title (default 12 = all US)
+      # - CINESRC_PROVIDERS=5  # top servers probed per title (default 5, no fallbacks past them)
     # no networks/volumes needed - host nginx proxies to 127.0.0.1:7001
     # Python direct: returns upstream URLs + proxyHeaders, VPS only scrapes, 0 video bandwidth
     healthcheck:
