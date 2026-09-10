@@ -21,7 +21,9 @@ from .extractor_cinesrc import CinesrcExtractor, variant_exceeds_cap
 # Single-port mode: FastAPI can autostart the Node sidecar internally so only
 # 7001 is exposed. The sidecar still runs (Node hidden inside the same
 # container/process tree) but no second public port is needed.
+import asyncio
 import contextlib
+import signal
 import socket
 import subprocess
 import sys
@@ -63,13 +65,19 @@ def _start_sidecar_internal() -> subprocess.Popen | None:
     env = {**os.environ, "SIDECAR_PORT": sidecar_port}
     root = Path(__file__).resolve().parents[1]
     try:
-        proc = subprocess.Popen(
-            ["node", str(root / "sidecar" / "src" / "server.js")],
+        popen_kw: dict = dict(
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+        )
+        if os.name == "posix":
+            # own session => whole tree dies with us (no zombie on SIGKILL/evict)
+            popen_kw["start_new_session"] = True
+        proc = subprocess.Popen(
+            ["node", str(root / "sidecar" / "src" / "server.js")],
+            **popen_kw,
         )
     except FileNotFoundError:
         print("[sidecar] Node.js not found — sidecar autostart skipped", flush=True)
@@ -90,18 +98,43 @@ def _stop_sidecar_internal() -> None:
     global _SIDECAR_PROC
     if _SIDECAR_PROC is not None:
         try:
-            _SIDECAR_PROC.terminate()
+            if os.name == "posix":
+                try:
+                    os.killpg(_SIDECAR_PROC.pid, signal.SIGTERM)
+                except Exception:
+                    _SIDECAR_PROC.terminate()
+            else:
+                _SIDECAR_PROC.terminate()
             _SIDECAR_PROC.wait(timeout=5)
         except Exception:
             try:
-                _SIDECAR_PROC.kill()
+                if os.name == "posix":
+                    try:
+                        os.killpg(_SIDECAR_PROC.pid, signal.SIGKILL)
+                    except Exception:
+                        _SIDECAR_PROC.kill()
+                else:
+                    _SIDECAR_PROC.kill()
             except Exception:
                 pass
         _SIDECAR_PROC = None
 
+
+async def _async_wait_for_port(host: str, port: int, timeout: float = 15.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            await asyncio.to_thread(socket.create_connection, (host, port), timeout=1)
+            return True
+        except OSError:
+            await asyncio.sleep(0.2)
+    return False
+
+
 @contextlib.asynccontextmanager
 async def _lifespan(app: FastAPI):
-    _start_sidecar_internal()
+    # _start_sidecar_internal blocks (port probe loop) — keep it off the loop
+    await asyncio.to_thread(_start_sidecar_internal)
     yield
     _stop_sidecar_internal()
 

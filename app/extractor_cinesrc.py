@@ -73,9 +73,19 @@ class CinesrcExtractor:
         self._pcache: dict = {}  # (key, provider_id) -> {data, exp}
         self._down_until = 0.0  # skip fast when sidecar is known-down
         self._ids: dict = {}  # imdb -> tmdb (never expires)
+        # Single persistent client (Native HTTP Pipe): one socket reused for
+        # catalog/tmdb/rendition fetches instead of a fresh TLS handshake per
+        # call. Pool stays 1/1 (thread-safe) to match the gentle constraint.
+        self._client = httpx.Client(
+            timeout=httpx.Timeout(self.timeout, connect=10),
+            follow_redirects=True,
+            http2=True,
+            limits=httpx.Limits(max_keepalive_connections=1,
+                                max_connections=1),
+        )
 
     def _get(self, path: str, params: dict):
-        r = httpx.get(f"{SIDECAR_URL}{path}", params=params, timeout=self.timeout)
+        r = self._client.get(f"{SIDECAR_URL}{path}", params=params)
         r.raise_for_status()
         return r.json()
 
@@ -87,8 +97,9 @@ class CinesrcExtractor:
             return self._ids[media_id]
         kind = "series" if media_type == "tv" else "movie"
         try:
-            m = httpx.get(f"https://v3-cinemeta.strem.io/meta/{kind}/{media_id}.json",
-                          timeout=15).json()["meta"]
+            m = self._client.get(
+                f"https://v3-cinemeta.strem.io/meta/{kind}/{media_id}.json",
+                timeout=15).json()["meta"]
             tmdb = str(m.get("moviedb_id") or media_id)
         except Exception as e:
             log.warning("cinemeta mapping failed for %s: %s", media_id, e)
@@ -104,9 +115,15 @@ class CinesrcExtractor:
         key = (media_id, media_type, str(season), str(episode))
         try:
             out = self._resolve(key, media_id, media_type, season, episode)
-        except Exception as e:
-            log.warning("cinesrc resolve failed: %s", e)
+        except (httpx.ConnectError, httpx.TimeoutException, OSError) as e:
+            # sidecar/unreachable: back off globally, it's down for everyone
+            log.warning("cinesrc unreachable, backing off: %s", e)
             self._down_until = time.time() + 30
+            return None
+        except Exception as e:
+            # single-title/provider failure (parse, 404, bad playlist):
+            # must NOT penalize other titles — no global cooldown
+            log.warning("cinesrc resolve failed for %s: %s", key, e)
             return None
         if out and media_type == "tv":
             self._prefetch_next(media_id, season, episode)
@@ -170,8 +187,11 @@ class CinesrcExtractor:
         else:
             try:
                 cat = self._get("/api/catalog", params)
-            except Exception:
+            except (httpx.ConnectError, httpx.TimeoutException, OSError):
                 self._down_until = time.time() + 60  # sidecar likely down
+                return None
+            except Exception as e:
+                log.warning("catalog failed (not connectivity): %s", e)
                 return None
             self._pcache[ckey] = {"data": cat, "exp": time.time() + 120}
         providers = sorted(cat.get("providers", []), key=lambda p: -p.get("rank", 0))
@@ -250,9 +270,10 @@ class CinesrcExtractor:
         master to join audio + video.
         """
         try:
-            r = httpx.get(master_url, headers={"Referer": "https://cinesrc.st/",
-                                               "User-Agent": "Mozilla/5.0"},
-                          timeout=25, follow_redirects=True)
+            r = self._client.get(master_url,
+                                 headers={"Referer": "https://cinesrc.st/",
+                                          "User-Agent": "Mozilla/5.0"},
+                                 timeout=25)
         except Exception:
             return []
         if r.status_code != 200 or "EXTM3U" not in r.text[:500]:
