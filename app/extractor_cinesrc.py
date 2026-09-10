@@ -23,7 +23,8 @@ log = logging.getLogger("cinesrc")
 
 SIDECAR_URL = os.getenv("CINESRC_URL", "http://127.0.0.1:8001").rstrip("/")
 CINESRC_ENABLED = os.getenv("CINESRC_ENABLED", "1") == "1"
-MAX_PROVIDERS_TRY = int(os.getenv("CINESRC_PROVIDERS", "5"))
+MAX_PROVIDERS_TRY = int(os.getenv("CINESRC_PROVIDERS", "12"))
+MAX_PROBE_N = int(os.getenv("CINESRC_PROBE", "5"))
 MAX_PROBE_WORKERS = int(os.getenv("CINESRC_WORKERS", "1"))
 # Comma-separated region flags; only providers carrying one of these are
 # probed (upstream flags look like ["us"], ["fr"], ["de"], ["mx"]).
@@ -175,12 +176,12 @@ class CinesrcExtractor:
             self._pcache[ckey] = {"data": cat, "exp": time.time() + 120}
         providers = sorted(cat.get("providers", []), key=lambda p: -p.get("rank", 0))
         providers = [p for p in providers if _region_ok(p)]
-        # Single batch call: the sidecar probes all providers in parallel
-        # (one challenge host each), so wall time ~= slowest probe, not the
-        # sum. Only STALE providers are probed — fresh per-provider cache
-        # hits are reused, so repeats are instant. Results are re-ordered by
-        # rank afterwards.
-        todo = providers[:MAX_PROVIDERS_TRY]
+        # CINESRC_PROVIDERS (12) = pool considered; CINESRC_PROBE (5) = how
+        # many top-ranked get probed — first 5 that have the stream, no
+        # fallbacks past them. Single batch call probes them in parallel
+        # (one challenge host each), wall time ~= slowest probe. Fresh
+        # per-provider cache hits are reused, so repeats are instant.
+        todo = providers[:MAX_PROVIDERS_TRY][:MAX_PROBE_N]
         if not todo:
             return None
         now = time.time()
